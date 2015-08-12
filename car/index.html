@@ -1,0 +1,535 @@
+<html>
+<head>
+	<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black">
+    <meta name="format-detection" content="telephone=no">
+</head>
+<body onload="onload">
+<style>
+
+	body {
+		text-align: -webkit-center;
+		margin: 0;
+		padding: 0;
+		width: 100%;
+		height: 100%;
+		background-color: #fff;
+	}
+
+	#game-container {
+		position: absolute;
+		left: 50%;
+		top: 50%;
+		width: 600px;
+		height:320px;
+		margin: -160px 0 0 -300px;
+		background-color: green;/*#5AACC0;*/
+	}
+
+	p {
+		color:#fff;
+	}
+
+	#time {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 80px;
+		height: 40px;
+		line-height: 40px;
+		font-size: 20px;
+	}
+
+	#background {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+	}
+	#background canvas {
+		position: absolute;
+		left: 0;
+		top: 0;
+		width: 100%;
+		height: 100%;
+	}
+
+</style>
+<div id="game-container">
+	<div id="background"></div>
+	<div id="time"></div>
+	<p>方向键上：加速，左右：转弯、空格：刹车</p>
+	<p>看谁是最快速的弯道漂移王</p>
+</div>
+
+<script src="../lib/hilo.js"></script>
+<script type="text/javascript">
+
+(function(){
+
+	var MaxWidth = 600//document.body.getBoundingClientRect().width
+	,	MaxHeight = 320//document.body.getBoundingClientRect().height
+	,	roadTexture
+	,	context
+	,	bufferContext
+	,	time = document.getElementById('time')
+	,	spend_time = 0
+	,	degree = Math.PI/180
+	;
+
+    var Stage = Hilo.Stage;
+	var Ticker = Hilo.Ticker;
+	var Tween = Hilo.Tween;
+	var Bitmap = Hilo.Bitmap;
+
+	var fv = MaxWidth,
+		cameraVector = {
+			x:0,
+			y:-140,
+			z:0,
+			rotateX:-10,
+			rotateY:0
+		},
+		rotateDerection = 0;
+
+	// 3D投影转换到2D
+	var _convert3Dto2D = function(vector){
+		var cosY = Math.cos(cameraVector.rotateY), sinY = Math.sin(cameraVector.rotateY),
+			// cosX = Math.cos(cameraVector.rotateX), sinX = Math.sin(cameraVector.rotateX),
+
+			dx = vector.x - cameraVector.x,
+			// dy = vector.y - cameraVector.y,
+			dz = vector.z - cameraVector.z,
+
+			x = dx*cosY - dz*sinY,
+			z = dz*cosY + dx*sinY,
+			// y = dy*cosX - z*sinX,
+			// z = z*cosX + dy*sinX,
+
+			perspective = fv / (fv + z),
+			_x = x * perspective,
+			_y = (vector.y - cameraVector.y) * perspective;
+
+		// var perspective = fv / (fv + vector.z - cameraVector.z),
+		// 	_x = (vector.x - cameraVector.x) * perspective,
+		// 	_y = (vector.y - cameraVector.y) * perspective;
+
+		return {
+			x : _x,
+			y : _y,
+			scale : perspective
+		};
+	};
+
+	var mapScale = 1,
+		clip_height = 12,
+		road_clip_num,
+		road_clip = [],
+		road_clip_view = [];
+
+	(function init(){
+
+		var game_over = false, 
+			car, car_atlas, 
+			car_speed_x = 0, 
+			car_speed_z = 0, 
+			car_speed = 40, 
+			car_stop = false;
+
+		// 陀螺仪改变摄像机水平速度
+		window.addEventListener('deviceorientation', function(ev){
+			// Z轴切面的倾斜角度
+	        // car_speed_x = ev.gamma;
+	        // var sprite;
+	        // if(car_speed_x > 5) {
+	        // 	sprite = car_atlas.getSprite('right')
+	        // } else if(car_speed_x < -5) {
+	        // 	sprite = car_atlas.getSprite('left')
+	        // } else {
+	        // 	sprite = car_atlas.getSprite('center')
+	        // }
+	        // car.setFrame(sprite);
+	        // car.play()
+	        // cameraVector.y = ev.beta * 5;
+	        // rotateDerection = ev.gamma > 0 ? 1 : -1;
+		});
+
+		var lastX, lastY;
+		document.body.addEventListener('touchstart', function(ev){
+			var touch = ev.touches[0];
+			lastX = touch.pageX;
+			lastY = touch.pageY;
+			if(lastX < MaxWidth / 2) rotateDerection = -1;
+			else rotateDerection = 1;
+		});
+		document.body.addEventListener('touchend', function(ev){
+			rotateDerection = 0;
+		});
+		document.body.addEventListener('touchmove', function(ev){
+			ev.preventDefault();
+			var touch = ev.changedTouches[0],
+				x = touch.pageX,
+				y = touch.pageY;
+			if(lastX==undefined) lastX = x;
+			if(lastY==undefined) lastY = y;
+
+			// if(Math.abs(x-lastX) > Math.abs(y-lastY)) {
+				// cameraVector.rotateY += (x-lastX)*degree/4;
+	        	// rotateDerection = x-lastX > 0 ? 1 : -1;
+			// } else {
+				car_speed += (y-lastY)/2;
+			// }
+			lastX = x;
+			lastY = y;
+		});
+
+		window.addEventListener('keydown', function(e){
+			if(e.keyCode == 39) { // right
+				rotateDerection = 1;
+			} else if(e.keyCode == 37) { // left
+				rotateDerection = -1;
+			} else if(e.keyCode == 38) { //up
+				car_speed += 6;
+			} else if(e.keyCode == 32) { //down
+				car_speed -= 10;
+			}
+
+			if(car_speed <= 0){
+				car_speed = 0
+			} else if(car_speed > 60) {
+				car_speed = 60;
+			}
+		});
+		window.addEventListener('keyup', function(e){
+			if(e.keyCode == 39 || e.keyCode == 37) { //down
+			// 	car_stop = false;
+			// } else {
+				rotateDerection=0;
+			}
+		});
+
+		var stageConfig = {
+                width: MaxWidth,
+                height: MaxHeight,
+                container: document.getElementById('background')
+			};
+        var stage = new Stage(stageConfig);
+        stage.enableDOMEvent([Hilo.event.POINTER_END],true);
+
+        // var bufferCanvas = document.createElement('canvas');
+        var carTexture = new Image(), backgroundTexture = new Image(), finishLineTexture = new Image();
+		roadTexture = new Image();
+
+		carTexture.onload = function(){
+
+			var roadHeight = roadTexture.height * mapScale;
+			var roadWidth = roadTexture.width * mapScale;
+			var car_y = stage.height - 150;
+	        var road_clip_index = 0, texture_index = 0;
+	        var crush_detected = false;
+
+	        stage.onUpdate = function(dt){
+				var vector3d, 
+					vector2d, 
+					bitmap;
+
+				if(game_over) {
+					return;
+				} else {
+					spend_time += dt;
+					time.innerHTML = Math.floor(spend_time/100)/10;
+				}
+
+				texture_index = road_clip_index % road_clip_num + 1;
+
+				cameraVector.rotateY += rotateDerection*0.008;
+
+				// 摄像机水平位移
+		        car_speed_x = Math.sin(cameraVector.rotateY)*car_speed;
+		        car_speed_z = Math.cos(cameraVector.rotateY)*car_speed;
+
+				cameraVector.x += car_speed_x;
+				// 如果未到达公路底部，则向前移动摄像机
+				if( road_clip_index <= road_clip.length - road_clip_view.length ) {
+					cameraVector.z += car_speed_z;
+				} else {
+					game_over = true;
+				}
+
+				// if(car_speed>0){
+				// 	road_clip_index++
+				// }else if(car_speed<0){
+				// 	road_clip_index--;
+				// }
+
+				crush_detected = false;
+				// 遍历公路绘图切片，从地图可视区域未起点
+				for(var i = road_clip_index, j = 0, 
+						map_len = road_clip.length, 
+						len = road_clip_index + road_clip_view.length; 
+						i < len && i < map_len; i++){
+
+					// 切片是否遍历完了一张公路素材图，轮播循环
+					if((i+1) % road_clip_num == 0){
+						texture_index = 1;
+					} else {
+						texture_index++;
+					}
+					// 当前绘图切片
+					bitmap = road_clip_view[j];
+					j++;
+
+					// 将切片3D坐标，投影变换为2D
+					vector3d = road_clip[i];
+					vector2d = _convert3Dto2D(vector3d);
+
+					// 是否超出可视摄像机可视范围，即当前画布范围
+					if(vector2d.y > stage.height) {
+						// 下一场循环遍历从下一个地图切片开始
+						bitmap.visible = false;
+						road_clip_index = i;
+					// } else if(vector2d.y > stage.height) {
+					} else {
+						// 重设绘图切片为当前地图的2D投影坐标
+						bitmap.visible = true;
+						bitmap.x = vector2d.x + MaxWidth/2;
+						bitmap.y = vector2d.y + MaxHeight/2 - 50;
+						// bitmap.rotation = cameraVector.rotate;
+						bitmap.scaleX = bitmap.scaleY = vector2d.scale;
+
+						bitmap.setImage(roadTexture, 
+										[0, roadHeight-texture_index*clip_height, 
+											roadWidth, clip_height]);
+
+
+						if(!crush_detected && bitmap.y - car_y < clip_height/2) {
+							crush_detected = true;
+							if ((car.x - car.width/2 < bitmap.x - roadWidth/2) || 
+								(car.x + car.width/2 > bitmap.x + roadWidth/2)) {
+								console.log('crush');
+								car_speed = 0;
+								cameraVector.x -= car_speed_x;
+								cameraVector.z -= car_speed_z;
+					            // Tween.to(cameraVector, {
+					            //     y:cameraVector.y-5
+					            // }, {
+					            //     duration:100
+					            // });
+							}
+						}
+					}
+
+				}
+	        }
+
+			context = document.getElementById('background').querySelector('canvas').getContext('2d');
+			// bufferContext = bufferCanvas.getContext('2d');
+
+			// bufferCanvas.width = roadTexture.width;
+			// bufferCanvas.height = roadTexture.height;
+
+			// bufferContext.translate(roadWidth/2, roadHeight/2);
+			// bufferContext.rotate(10);
+			// bufferContext.translate(-roadWidth/2, -roadHeight/2);
+			// bufferContext.drawImage(roadTexture, 0, 0, roadTexture.width, roadTexture.height);
+
+	        car_atlas = new Hilo.TextureAtlas({
+	            image: carTexture,
+	            width: 1300,//1080,
+	            height: 100,//890,
+	            // depth:-2,
+	            frames: {
+	                frameWidth: 100,//216,
+	                frameHeight: 100,//178,
+	                numFrames: 13
+	            },
+	            sprites: {
+	                left: {from:3, to:3},
+	                center: {from:6, to:6},
+	                right: {from:10, to:10} //精灵属性纵向抖动幅度
+	            }
+	        });
+	        car = new Hilo.Sprite({
+                frames: car_atlas.getSprite('center'),
+                x: stage.width * 0.5, //起始横向坐标
+                y: car_y, //起始横向坐标
+				pivotX:75,
+                width: 150,
+                height: 150
+            });
+
+			road_clip_num = Math.ceil(roadHeight*mapScale/clip_height)
+
+			// 地图切片数据，大数组对象
+			for(var i = 0; i < 400; i++){
+				road_clip.push({
+					x:0,
+					y:0,
+					z:i*clip_height-300
+				});
+			}
+			for(var i = 0; i < 500; i++){
+				road_clip.push({
+					x:i*2,
+					y:0,
+					z:i*clip_height+400*clip_height-300
+				});
+			}
+			for(var i = 0; i < 2160; i++){
+				road_clip.push({
+					x:1000*Math.cos(degree*i/3),
+					y:0,
+					z:i*clip_height-300+900*clip_height
+				});
+			}
+			for(var i = 0; i < 1000; i++){
+				road_clip.push({
+					x:1000-i*2,
+					y:0,
+					z:i*clip_height-300+3060*clip_height
+				});
+			}
+
+			var background = new Bitmap({
+	            image:backgroundTexture,
+	            x:0,
+	            y:-50,
+	            scaleY:0.5,
+	            width:Stage.width,
+	            height:stage.height/2
+	        });
+	        stage.addChild(background);
+			
+			// 绘图切片，限定数量来防止绘图性能过高
+			for(var i = 0; i < road_clip_num*15; i++){
+				var clip = new Bitmap({
+				// var clip = new Hilo.Container({
+		            image:roadTexture,
+					pivotX:roadWidth/2,
+					pivotY:clip_height/2,
+		            x:0,
+		            y:0//,
+		    //         onUpdate:function(){
+						// // 切片是否遍历完了一张公路素材图，轮播循环
+						// if(texture_index % road_clip_num == 0){
+						// 	texture_index = 1;
+						// } else {
+						// 	texture_index++;
+						// }
+						// // 当前绘图切片
+						// // bitmap = road_clip_view[j];
+
+						// // 将切片3D坐标，投影变换为2D
+						// vector3d = road_clip[road_clip_index + this.index];
+						// vector2d = _convert3Dto2D(vector3d);
+						// // var cos = Math.cos(cameraVector.rotate*degree), sin = Math.sin(cameraVector.rotate*degree)
+						// // var x = vector3d.x*cos - vector3d.z*sin
+						// // var z = vector3d.z*cos + vector3d.x*sin
+						// // vector2d = _convert3Dto2D({
+						// // 	x:x,
+						// // 	y:vector3d.y,
+						// // 	z:z
+						// // });
+
+						// // 是否超出可视摄像机可视范围，即当前画布范围
+						// if(vector2d.y > stage.height) {
+						// 	// 下一场循环遍历从下一个地图切片开始
+						// 	this.visible = false;
+						// 	road_clip_index++;
+						// } else {
+						// 	// 重设绘图切片为当前地图的2D投影坐标
+						// 	// this.visible = true;
+						// 	// this.x = vector2d.x + MaxWidth/2;
+						// 	// this.y = vector2d.y + MaxHeight/3;
+						// 	// // this.rotation = cameraVector.rotate;
+						// 	// this.scaleX = this.scaleY = mapScale * vector2d.scale;
+
+						// 	// this.setImage(roadTexture, 
+						// 	// 				[0, roadTexture.height-texture_index*clip_height, 
+						// 	// 					roadTexture.width, clip_height]);
+
+						// 	// bufferContext.translate(roadWidth/2, roadHeight/2);
+						// 	// bufferContext.rotate(cameraVector.rotate/degree);
+						// 	// bufferContext.translate(-roadWidth/2, -roadHeight/2);
+						// 	// bufferContext.drawImage(roadTexture, 0, 0, roadTexture.width, roadTexture.height);
+
+						// 	context.save();
+						// 	context.translate(vector2d.x + MaxWidth/2, vector2d.y + MaxHeight/3)
+						// 	context.scale(vector2d.scale, vector2d.scale);
+						// 	context.translate(-roadWidth/2, -clip_height/2)
+						// 	context.drawImage(roadTexture, 
+						// 					  0, roadHeight-texture_index*clip_height, roadWidth, clip_height, 
+						// 					  0, 0, roadWidth, clip_height);
+						// 	context.restore();
+						// }
+		            // }
+		        });
+				clip.index = i;
+				road_clip_view.push(clip);
+				stage.addChild(clip);
+			}
+
+			stage.addChild(car);
+
+			var finisLineVector = {
+				x:0,
+				y:-230,
+				z:500*clip_height-300+3060*clip_height
+			}
+			var finisLine = new Bitmap({
+	            image:finishLineTexture,
+	            visible:false,
+	            x:0,
+	            y:0,
+	            pivotX:261,
+	            scaleX:0.5,
+	            scaleY:0.5,
+	            onUpdate:function(){
+					var vector2d = _convert3Dto2D(finisLineVector);
+
+					this.visible = true;
+					this.x = vector2d.x + MaxWidth/2;
+					this.y = vector2d.y + MaxHeight/2 - 50;
+					// bitmap.rotation = cameraVector.rotate;
+					this.scaleX = this.scaleY = vector2d.scale;
+	            }
+	        });
+	        stage.addChild(finisLine);
+
+            var ticker = new Ticker(50);
+            ticker.addTick(stage);
+            ticker.addTick(Tween);
+            ticker.start();
+            // var t = cameraVector.y;
+            // Tween.to(cameraVector, {
+            //     y:t-5
+            // }, {
+            //     duration:100,
+            //     reverse:true,
+            //     loop:true
+            // });
+            // Tween.to(cameraVector, {
+            //     x:t-100
+            // }, {
+            //     duration:1400,
+            //     reverse:true,
+            //     loop:true
+            // });
+
+		}
+		backgroundTexture.src = './forestSkyline.jpg';
+		finishLineTexture.src = './finish-line.png';
+        carTexture.src="./car.png";
+		roadTexture.src = "./road.jpg";//http://play.59600.com/wan/kartrider-rush/images/forestRoad.jpg";
+
+	})()
+
+})();
+
+</script>
+
+</body>
+</html>
